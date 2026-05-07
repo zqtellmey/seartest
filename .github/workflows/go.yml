@@ -3,13 +3,14 @@ name: Searcade Auto Login
 on:
   workflow_dispatch: # 支持手动触发
   schedule:
-    - cron: '30 23 * * *' # 示例：每天北京时间早上 7:30 运行
+    - cron: '30 23 * * *' # 每天北京时间早上 7:30 运行 (UTC 15:30)
 
 jobs:
-  run-login:
+  run-searcade:
     runs-on: ubuntu-latest
+    
     steps:
-      - name: Checkout
+      - name: Checkout Code
         uses: actions/checkout@v4
 
       - name: Set up Python
@@ -17,10 +18,17 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install dependencies
+      - name: Install System Dependencies
         run: |
-          pip install playwright requests
-          playwright install chromium
+          sudo apt-get update
+          # 安装运行浏览器所需的系统库及虚拟显示器
+          sudo apt-get install -y libgconf-2-4 libnss3-tools x11-xserver-utils xvfb
+
+      - name: Install Python Dependencies
+        run: |
+          pip install seleniumbase requests
+          # 安装特定的浏览器驱动
+          sbase install chromedriver
 
       - name: 安装并启动代理 (全自动适配内核)
         env:
@@ -141,11 +149,17 @@ jobs:
           USER_PASSWORD: ${{ secrets.USER_PASSWORD }}
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-        run: python main.py
+          PYTHONUNBUFFERED: "1"
+       
+        run: |
+          # 使用 xvfb-run 在虚拟显示器中启动 Python 脚本
+          # 这对于 uc_gui_click_captcha() 模拟物理点击至关重要
+          xvfb-run --auto-servernum python main.py
 
-      - name: Upload Artifacts (Screenshots)
+      - name: Upload Screenshots (Debug)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: debug-screenshots
-          path: "*.png"
+          name: searcade-debug-screenshots
+          path: output/screenshots/*.png
+          retention-days: 7
