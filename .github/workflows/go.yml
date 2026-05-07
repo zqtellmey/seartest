@@ -1,4 +1,4 @@
-name: Searcade Auto Login
+name: Sc
 
 on:
   workflow_dispatch:
