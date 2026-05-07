@@ -1,91 +1,119 @@
-import os
-import requests
-from playwright.sync_api import sync_playwright, TimeoutError
+import os, sys, time, requests
+from pathlib import Path
+from seleniumbase import SB
 
-# 从环境变量读取配置
+# --- 配置区 ---
+# 从 GitHub Secrets 读取
 EMAIL = os.environ.get("USER_EMAIL")
 PASSWORD = os.environ.get("USER_PASSWORD")
 TG_TOKEN = os.environ.get("TG_BOT_TOKEN")
 TG_CHAT_ID = os.environ.get("TG_CHAT_ID")
 
-def send_tg_msg(text, photo_path=None):
-    """发送文字或图片到 Telegram"""
+TARGET_URL = "https://searcade.com/en/"
+OUTPUT_DIR = Path("output/screenshots")
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+# --- 工具函数 ---
+def send_tg_msg(text, img_path=None):
+    if not TG_TOKEN or not TG_CHAT_ID: return
     try:
-        if photo_path:
-            url = f"https://api.telegram.org/bot{TG_TOKEN}/sendPhoto"
-            with open(photo_path, "rb") as photo:
-                requests.post(url, data={"chat_id": TG_CHAT_ID, "caption": text}, files={"photo": photo})
-        else:
-            url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage"
-            requests.post(url, data={"chat_id": TG_CHAT_ID, "text": text})
+        base_url = f"https://api.telegram.org/bot{TG_TOKEN}"
+        requests.post(f"{base_url}/sendMessage", json={"chat_id": TG_CHAT_ID, "text": text})
+        if img_path and Path(img_path).exists():
+            with open(img_path, "rb") as f:
+                requests.post(f"{base_url}/sendPhoto", data={"chat_id": TG_CHAT_ID}, files={"photo": f})
     except Exception as e:
-        print(f"[!] Telegram 发送失败: {e}")
+        print(f"[TG ERROR] {e}")
 
-def run():
-    with sync_playwright() as p:
-        # 启动浏览器
-        browser = p.chromium.launch(headless=True)
-        # 设置较大的视口确保元素可见
-        context = browser.new_context(viewport={'width': 1280, 'height': 800})
-        page = context.new_page()
+def shot(stage: str) -> str:
+    filename = f"searcade_{int(time.time())}_{stage}.png"
+    p = OUTPUT_DIR / filename
+    return str(p)
 
+# --- 核心逻辑 ---
+def handle_cf_turnstile(sb):
+    """过 CF 验证的关键模块"""
+    try:
+        # 检查是否存在 CF 框架
+        if sb.is_element_present('iframe[src*="cloudflare"]'):
+            print("[INFO] 发现 Cloudflare 验证，尝试自动点击...")
+            time.sleep(2)
+            sb.uc_gui_click_captcha() # 使用你代码里的过 CF 模块
+            time.sleep(4)
+    except:
+        pass
+
+def main():
+    # UC 模式启动配置
+    opts = {
+        "uc": True,             # 开启 Undetected 模式
+        "test": True, 
+        "locale": "en", 
+        "headed": False,        # GitHub Actions 设为 False
+        "timeout_multiplier": 1.5 
+    }
+
+    with SB(**opts) as sb:
         try:
-            # 1. 打开 Searcade 首页
-            print("[*] 正在打开首页...")
-            page.goto("https://searcade.com/en/", wait_until="networkidle")
-            page.screenshot(path="step1_home.png")
-            send_tg_msg("步骤 1: 已进入首页", "step1_home.png")
+            # 1. 进入首页
+            print("[*] 打开首页...")
+            sb.uc_open_with_reconnect(TARGET_URL, reconnect_time=5.0)
+            img1 = shot("home")
+            sb.save_screenshot(img1)
+            send_tg_msg("1. 已进入首页", img1)
 
-            # 点击 Login 链接
-            print("[*] 正在点击登录入口...")
-            page.click('//*[@id="navbarSupportedContent"]/ul[2]/li[2]/a')
-            
-            # 2. 等待跳转到 Userveria 授权页
-            print("[*] 等待授权页面加载...")
-            page.wait_for_selector('//*[@id="email"]', timeout=30000)
-            page.screenshot(path="step2_auth_page.png")
-            send_tg_msg(f"步骤 2: 已进入授权页\n当前URL: {page.url}", "step2_auth_page.png")
+            # 2. 点击登录链接 (使用你提供的 XPATH)
+            login_xpath = '//*[@id="navbarSupportedContent"]/ul[2]/li[2]/a'
+            sb.wait_for_element_visible(login_xpath, timeout=10)
+            sb.click(login_xpath)
+            print("[*] 已点击登录入口，等待跳转...")
 
-            # 输入 Email
-            print("[*] 正在输入 Email...")
-            page.fill('//*[@id="email"]', EMAIL)
-            page.screenshot(path="step2_email_filled.png")
+            # 3. 处理跳转后的 CF 验证
+            time.sleep(5) 
+            handle_cf_turnstile(sb)
+            
+            # 检查 Email 输入框是否存在
+            email_xpath = '//*[@id="email"]'
+            if not sb.is_element_visible(email_xpath):
+                # 如果没看到输入框，可能还在验证页面，再点一次
+                handle_cf_turnstile(sb)
 
-            # 3. 点击 Continue
-            print("[*] 点击 Continue with email...")
-            page.click('//*[@id="__nuxt"]/div/div/div[2]/div/div[2]/form/div/div[2]/button')
-            
-            # 4. 输入密码
-            print("[*] 等待并输入密码...")
-            page.wait_for_selector('//*[@id="password"]', timeout=15000)
-            page.screenshot(path="step4_password_page.png")
-            send_tg_msg("步骤 4: 密码框已出现", "step4_password_page.png")
-            
-            page.fill('//*[@id="password"]', PASSWORD)
+            # 4. 输入邮箱
+            sb.wait_for_element_visible(email_xpath, timeout=20)
+            img2 = shot("auth_page")
+            sb.save_screenshot(img2)
+            send_tg_msg("2. 进入授权页/过CF成功", img2)
 
-            # 5. 点击最终登录
-            print("[*] 执行最终登录...")
-            page.click('//*[@id="__nuxt"]/div/div/div[2]/div/div[2]/form/div/div[3]/button')
-            
-            # 等待跳转完成或网络空闲
-            page.wait_for_load_state("networkidle")
-            time_now = page.evaluate("() => new Date().toLocaleString()")
-            page.screenshot(path="step5_final.png")
-            
-            # 验证是否拿到 Token (根据你之前的逻辑，可能在 Cookie 或 localStorage)
-            final_cookies = page.context.cookies()
-            has_token = any('token' in c['name'].lower() for c in final_cookies)
-            
-            send_tg_msg(f"步骤 5: 登录操作完成\n时间: {time_now}\n检测到Cookie Token: {has_token}", "step5_final.png")
+            sb.type(email_xpath, EMAIL)
+            # 点击 Continue (使用你提供的 XPATH)
+            sb.click('//*[@id="__nuxt"]/div/div/div[2]/div/div[2]/form/div/div[2]/button')
+            print("[*] 已提交邮箱")
 
-        except TimeoutError as e:
-            page.screenshot(path="error_timeout.png")
-            send_tg_msg(f"❌ 运行超时: 某个元素未能在规定时间内加载\n{str(e)}", "error_timeout.png")
+            # 5. 输入密码
+            pwd_xpath = '//*[@id="password"]'
+            sb.wait_for_element_visible(pwd_xpath, timeout=15)
+            sb.type(pwd_xpath, PASSWORD)
+            
+            img3 = shot("pwd_page")
+            sb.save_screenshot(img3)
+
+            # 点击最终登录 (使用你提供的 XPATH)
+            sb.click('//*[@id="__nuxt"]/div/div/div[2]/div/div[2]/form/div/div[3]/button')
+            print("[*] 正在执行最终登录...")
+
+            # 6. 完成并确认
+            time.sleep(8) # 等待回调跳转
+            img4 = shot("final")
+            sb.save_screenshot(img4)
+            
+            curr_url = sb.get_current_url()
+            send_tg_msg(f"✅ 登录流程完成！\n最终URL: {curr_url}", img4)
+
         except Exception as e:
-            page.screenshot(path="error_general.png")
-            send_tg_msg(f"❌ 运行异常:\n{str(e)}", "error_general.png")
-        finally:
-            browser.close()
+            err_img = shot("error")
+            sb.save_screenshot(err_img)
+            send_tg_msg(f"❌ 运行异常: {str(e)}", err_img)
+            print(f"[ERROR] {e}")
 
 if __name__ == "__main__":
-    run()
+    main()
