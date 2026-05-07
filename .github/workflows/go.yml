@@ -3,11 +3,13 @@ name: Searcade Auto Login
 on:
   workflow_dispatch:
   schedule:
-    - cron: '30 23 * * *'
+   # 每天北京时间 13:00 运行 (UTC 05:00)
+    - cron: '0 5 * * *'
 
 jobs:
   run-searcade:
     runs-on: ubuntu-latest
+    timeout-minutes: 5  # <--- 加入这一行，强制整个任务最高只跑 5 分钟
     
     steps:
       - name: Checkout Code
