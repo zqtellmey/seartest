@@ -9,7 +9,7 @@ PASSWORD = os.environ.get("USER_PASSWORD")
 TG_TOKEN = os.environ.get("TG_BOT_TOKEN")
 TG_CHAT_ID = os.environ.get("TG_CHAT_ID")
 
-TARGET_URL = "https://searcade.com/en/"
+TARGET_URL = https://searcade.com/en/admin
 OUTPUT_DIR = Path("output/screenshots")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
